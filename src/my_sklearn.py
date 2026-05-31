@@ -78,7 +78,7 @@ class my_LinearRegression:
 
             self.weights -= self.learning_rate * grad
 
-            loss = self._compute_loss(X, y)
+            loss = self._compute_loss(X, y, n_samples)
 
             if loss < best_loss:
                 best_loss = loss
