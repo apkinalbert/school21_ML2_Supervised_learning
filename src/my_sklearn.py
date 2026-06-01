@@ -1,18 +1,19 @@
 import numpy as np
 
 class my_LinearRegression:
-    def __init__(self, solver='sgd', learning_rate=0.01, n_epochs=200, random_state=None):
+    def __init__(self, solver='sgd', learning_rate=0.01, n_epochs=200, random_state=None, batch_size=None):
         self.solver = solver
         self.n_epochs = n_epochs
         self.learning_rate = learning_rate
         self.weights = None
         self.random_state = random_state
-        self.patience = 7
+        self.patience = 5
+        self.batch_size = batch_size
     
-    def _regularization_grad(self, n_samples):
+    def _regularization_grad(self):
         return 0
     
-    def _regularization_loss(self, n_samples):
+    def _regularization_loss(self):
         return 0
     
     def _compute_loss(self, X, y, n_samples):
@@ -20,9 +21,9 @@ class my_LinearRegression:
 
         mse =((pred - y) ** 2).mean()
 
-        return mse + self._regularization_loss(n_samples)
+        return mse + self._regularization_loss() / n_samples
     
-    def _sgd(self, X, y, n_samples):
+    def _gd_family(self, X, y, n_samples, batch_size=1):
 
         best_weights = self.weights.copy()
         best_loss = np.inf
@@ -31,20 +32,27 @@ class my_LinearRegression:
         if self.random_state is not None:
             np.random.seed(self.random_state)
 
+        indices = np.arange(n_samples)
+
         for _ in range(self.n_epochs):
 
-            indices = np.arange(n_samples)
             np.random.shuffle(indices)
 
-            for i in indices:
-                xi = X[i]
-                yi = y[i]
+            X_shuffled = X[indices]
+            y_shuffled = y[indices]
 
-                y_pred = xi @ self.weights
+            for start in range(0, n_samples, batch_size):
 
-                error = y_pred - yi
-                grad = 2 * error * xi
-                grad += self._regularization_grad(n_samples)
+                end = start + batch_size
+
+                X_batch = X_shuffled[start:end]
+                y_batch = y_shuffled[start:end]
+
+                y_pred = X_batch @ self.weights
+                error = y_pred - y_batch
+
+                grad = (2 / len(X_batch)) * X_batch.T @ error
+                grad += self._regularization_grad() / len(X_batch)
 
                 self.weights -= self.learning_rate * grad
 
@@ -59,37 +67,7 @@ class my_LinearRegression:
 
             if bad_epochs >= self.patience:
                 break
-        
-        self.weights = best_weights
 
-    def _gd(self, X, y, n_samples):
-
-        best_weights = self.weights.copy()
-        best_loss = np.inf
-        bad_epochs = 0
-    
-        for _ in range(self.n_epochs):
-
-            y_pred = X @ self.weights
-            error = y_pred - y
-
-            grad = (2 / n_samples) * X.T @ error
-            grad += self._regularization_grad(n_samples)
-
-            self.weights -= self.learning_rate * grad
-
-            loss = self._compute_loss(X, y, n_samples)
-
-            if loss < best_loss:
-                best_loss = loss
-                best_weights = self.weights.copy()
-                bad_epochs = 0
-            else:
-                bad_epochs += 1
-
-            if bad_epochs >= self.patience:
-                break
-        
         self.weights = best_weights
 
     def _analytical(self, X, y):
@@ -106,11 +84,18 @@ class my_LinearRegression:
         self.weights = np.zeros(n_features)
 
         if self.solver == 'sgd':
-            self._sgd(X, y, n_samples)
+            self._gd_family(X, y, n_samples, batch_size=1)
+
         elif self.solver == 'gd':
-            self._gd(X, y, n_samples)
+            self._gd_family(X, y, n_samples, batch_size=n_samples)
+
+        elif self.solver == 'mbgd':
+            batch_size = self.batch_size or 32
+            self._gd_family(X, y, n_samples, batch_size)
+
         elif self.solver == 'analytical':
             self._analytical(X, y)
+
         else:
             raise ValueError(f'Unknown solver: {self.solver}')
         
@@ -125,37 +110,37 @@ class my_LinearRegression:
     
 class my_Ridge(my_LinearRegression):
 
-    def __init__(self, alpha=1.0, solver='sgd', learning_rate=0.01, n_epochs=200, random_state=None):
+    def __init__(self, alpha=1.0, solver='sgd', learning_rate=0.01, n_epochs=400, random_state=None):
         super().__init__(solver, learning_rate, n_epochs, random_state)
         self.alpha = alpha
 
-    def _regularization_grad(self, n_samples):
+    def _regularization_grad(self):
         grad = np.zeros_like(self.weights)
-        grad[1:] = 2 * self.alpha * self.weights[1:] / n_samples
+        grad[1:] = 2 * self.alpha * self.weights[1:]
         return grad
     
-    def _regularization_loss(self, n_samples):
-        return self.alpha * np.sum(self.weights[1:] ** 2) / n_samples
+    def _regularization_loss(self):
+        return self.alpha * np.sum(self.weights[1:] ** 2)
     
     def _analytical(self, X, y):
-        raise NotImplementedError(
-            'Analytical solution is unavailable'
-        )
+        I = np.eye(X.shape[1])
+        I[0,0] = 0
+        self.weights = np.linalg.inv(X.T @ X + self.alpha * I) @ X.T @ y
     
 
 class my_Lasso(my_LinearRegression):
 
-    def __init__(self, alpha=1.0, solver='sgd', learning_rate=0.01, n_epochs=200, random_state=None):
+    def __init__(self, alpha=1.0, solver='sgd', learning_rate=0.01, n_epochs=400, random_state=None):
         super().__init__(solver, learning_rate, n_epochs, random_state)
         self.alpha = alpha
 
-    def _regularization_grad(self, n_samples):
+    def _regularization_grad(self):
         grad = np.zeros_like(self.weights)
-        grad[1:] = self.alpha * np.sign(self.weights[1:]) / n_samples
+        grad[1:] = self.alpha * np.sign(self.weights[1:])
         return grad
     
-    def _regularization_loss(self, n_samples):
-        return self.alpha * np.sum(np.abs(self.weights[1:])) / n_samples
+    def _regularization_loss(self):
+        return self.alpha * np.sum(np.abs(self.weights[1:]))
     
     def _analytical(self, X, y):
         raise NotImplementedError(
@@ -169,21 +154,20 @@ class my_ElasticNet(my_LinearRegression):
         self.alpha = alpha
         self.l1_ratio = l1_ratio
 
-    def _regularization_grad(self, n_samples):
+    def _regularization_grad(self):
         l1 = self.l1_ratio * np.sign(self.weights[1:])
         l2 = 2 * (1 - self.l1_ratio) * self.weights[1:]
         grad = np.zeros_like(self.weights)
-        grad[1:] = self.alpha * (l1 + l2) / n_samples
+        grad[1:] = self.alpha * (l1 + l2)
 
         return grad
     
-    def _regularization_loss(self, n_samples):
+    def _regularization_loss(self):
         l1 = self.l1_ratio * np.sum(np.abs(self.weights[1:]))
 
         l2 = (1 - self.l1_ratio) * np.sum(self.weights[1:] ** 2)
 
-        return self.alpha * (l1 + l2) / n_samples
-
+        return self.alpha * (l1 + l2)
     def _analytical(self, X, y):
         raise NotImplementedError(
             'Analytical solution is unavailable'
